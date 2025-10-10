@@ -1,0 +1,17 @@
+<INDICATOR>
+
+<INDICATOR_SEQ>373889</INDICATOR_SEQ>
+
+<PARENT_SEQ></PARENT_SEQ>
+
+<AGENCY_NAME>Metro-North Railroad</AGENCY_NAME>
+<INDICATOR_NAME>Escalator Availability</INDICATOR_NAME>
+<DESCRIPTION>Percent of the time that escalators are operational
+systemwide. The availability rate is based on physical observations 244
+the morning of regular business days only. This is a new indicator began
+reporting in 2009.</DESCRIPTION>
+
+<MONTHLY_TARGET>97.00</MONTHLY_TARGET>
+<MONTHLY_ACTUAL></MONTHLY_ACTUAL>
+
+</INDICATOR>
