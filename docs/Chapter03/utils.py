@@ -22,7 +22,7 @@ def get_ind_returns():
     Load and format the Ken French 30 Industry Portfolios Value Weighted Monthly Returns
     URL: https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html#Research
     """
-    ind = pd.read_csv("data/30_Industry_Portfolios.csv", header=7, index_col=0, skipfooter=1, 
+    ind = pd.read_csv("data/30_Industry_Portfolios.csv", header=6, index_col=0, nrows=1191,  
                       parse_dates= True, na_values=-99.99)
     ind=ind.apply(lambda s: pd.to_numeric(s, errors='coerce'))
     ind = ind/100
@@ -243,5 +243,112 @@ def portfolio_vol(weights, covmat):
     return (weights.T @ covmat @ weights)**0.5
 
 
+def plot_ef_2ass(n_points, er, cov):
+    """
+    Generate and visualize the efficient frontier for a two-asset portfolio optimization.
+    
+    This function computes portfolio combinations across different weight allocations
+    and displays the risk-return relationship as a continuous curve, helping investors
+    identify optimal portfolio compositions.
+    
+    Parameters
+    ----------
+    n_points : int
+        Resolution of the frontier curve (number of weight combinations to evaluate).
+        Recommended: 20-100 for smooth visualization.
+    er : pd.Series or array-like, length 2
+        Annual expected returns for both assets (expressed as decimals).
+        Example: [0.08, 0.12] represents 8% and 12% expected returns.
+    cov : pd.DataFrame or 2D array, shape (2,2)
+        Variance-covariance matrix capturing asset volatilities and correlation.
+        Must be symmetric and positive semi-definite.
+    
+    Returns
+    -------
+    matplotlib.axes.Axes
+        Interactive plot object with volatility on x-axis and returns on y-axis.
+        Each point represents a unique portfolio allocation strategy.
+    
+    Raises
+    ------
+    ValueError
+        When input dimensions don't match two-asset requirement.
+    
+    Implementation Details
+    ----------------------
+    - Weight allocation ranges from [1,0] to [0,1] for the asset pair
+    - Portfolio metrics calculated using Modern Portfolio Theory formulas
+    - Visualization uses connected points to show continuous frontier
+    - Left endpoint: 100% first asset, Right endpoint: 100% second asset
+    
+    Financial Context
+    -----------------
+    The efficient frontier represents portfolios offering maximum expected return
+    for each level of risk, or minimum risk for each level of return.
+    """
+    if er.shape[0] != 2 or er.shape[0] != 2:
+        raise ValueError("Function requires exactly 2 assets for frontier calculation")
+    weights = [np.array([w, 1-w]) for w in np.linspace(0, 1, n_points)]
+    rets = [portfolio_return(w, er) for w in weights]
+    vols = [portfolio_vol(w, cov) for w in weights]
+    ef = pd.DataFrame({
+        "Returns": rets, 
+        "Volatility": vols
+    })
+    return ef.plot.line(x="Volatility", y="Returns", style=".-")
 
 
+
+def get_top_drawdowns(dd_series: pd.Series, top: int = 5):
+    """
+    Return the top `top` drawdown episodes from a drawdown series.
+
+    Parameters
+    ----------
+    dd_series : pd.Series
+        Time series of drawdown values (0 at peaks, negative during drawdown).
+    top : int
+        Number of largest drawdown episodes to return (most negative troughs).
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: start, trough_date, trough_value, end, duration
+    """
+    
+    if not isinstance(dd_series, pd.Series):
+        raise TypeError("dd_series must be a pandas Series")
+
+    # Boolean series: True while in a drawdown (value < 0)
+    in_drawdown = dd_series < 0
+    
+    # Create group ids that change when in_drawdown status changes.
+    # Consecutive True values form one drawdown episode.
+    group_ids = (in_drawdown != in_drawdown.shift(1)).cumsum()
+
+    episodes = []
+    # Iterate over each contiguous group
+    for _, grp in dd_series.groupby(group_ids):
+        if grp.empty:
+            continue
+        # Only consider groups that are drawdowns (first value < 0)
+        if grp.iloc[0] < 0:
+            start = grp.index[0]
+            end = grp.index[-1]
+            trough_value = float(grp.min())
+            trough_date = grp.idxmin()
+            duration = len(grp)  # number of periods in episode
+            episodes.append({
+                "start": start,
+                "trough_date": trough_date,
+                "trough_value": trough_value,
+                "end": end,
+                "duration": duration
+            })
+    # If no drawdown episodes found, return empty DataFrame with expected columns
+    if not episodes:
+        return pd.DataFrame(columns=["start","trough_date","trough_value","end","duration"])
+    
+    # Sort by trough_value (most negative first) and return top N
+    episodes_df = pd.DataFrame(episodes).sort_values(by="trough_value").head(top).reset_index(drop=True)
+    return episodes_df
