@@ -30,6 +30,14 @@ def get_ind_returns():
     ind.columns = ind.columns.str.strip()
     return ind
 
+def get_fff_returns():
+    """
+    Load the Fama-French Research Factor Monthly Dataset
+    """
+    rets = pd.read_csv("data/F-F_Research_Data_Factors_m.csv",
+                       header=0, index_col=0, na_values=-99.99)/100
+    rets.index = pd.to_datetime(rets.index, format="%Y%m").to_period('M')
+    return rets
 
 def drawdown(return_series: pd.Series):
     """Input: Takes a time series of asset returns.
@@ -817,3 +825,231 @@ def optimal_weights(n_points, er, cov):
     return weights
 
 
+def compound(r):
+    """
+    Calculate the cumulative compound return from a series of periodic returns.
+    
+    Computes the total return from compounding a sequence of individual period returns,
+    accounting for the multiplicative effect where gains in one period apply to the
+    accumulated capital from previous periods.
+    
+    Parameters
+    ----------
+    r : pd.Series, np.ndarray, or list
+        Time series of periodic returns (as decimals).
+        Example: [0.05, 0.03, -0.02] represents 5% gain, 3% gain, 2% loss.
+        Can be daily, monthly, or any consistent time period.
+    
+    Returns
+    -------
+    float
+        Total compound return over the entire period (as decimal).
+        Example: 0.15 represents a 15% cumulative gain.
+        Negative values indicate cumulative losses.
+    
+    Notes
+    -----
+    Formula: (1 + r₁) × (1 + r₂) × ... × (1 + rₙ) - 1
+    
+    This is mathematically equivalent to: exp(sum(log(1 + rᵢ))) - 1
+    which is computationally more stable for long sequences.
+    
+    The function uses numpy's expm1() and log1p() for numerical precision:
+    - log1p(x) = log(1 + x) with better accuracy for small x
+    - expm1(x) = exp(x) - 1 with better accuracy for small x
+    
+    Examples
+    --------
+    >>> # Three months of returns: +5%, +3%, -2%
+    >>> returns = [0.05, 0.03, -0.02]
+    >>> total_return = compound(returns)
+    >>> print(f"Total return: {total_return:.4f} ({total_return*100:.2f}%)")
+    Total return: 0.0595 (5.95%)
+    
+    >>> # Verify: (1.05)(1.03)(0.98) - 1 = 0.05949
+    
+    >>> # Annual returns over 5 years
+    >>> annual_returns = pd.Series([0.10, 0.15, -0.05, 0.08, 0.12])
+    >>> five_year_return = compound(annual_returns)
+    >>> print(f"5-year cumulative return: {five_year_return*100:.2f}%")
+    5-year cumulative return: 45.23%
+    
+    >>> # Converting to annualized return
+    >>> n_years = len(annual_returns)
+    >>> annualized = (1 + five_year_return)**(1/n_years) - 1
+    >>> print(f"Annualized return: {annualized*100:.2f}%")
+    
+    >>> # Single period (no compounding effect)
+    >>> single_return = compound([0.10])
+    >>> print(single_return)
+    0.10
+    
+    Financial Interpretation
+    ------------------------
+    - Starting with $1000 and returns [0.10, 0.05]:
+      * After period 1: $1000 × 1.10 = $1100
+      * After period 2: $1100 × 1.05 = $1155
+      * Total return: ($1155 - $1000) / $1000 = 0.155 (15.5%)
+    
+    - This differs from simple sum: 0.10 + 0.05 = 0.15 (15%)
+    - The 0.5% difference is the compounding effect
+    
+    Use Cases
+    ---------
+    - Calculate total investment return over multiple periods
+    - Compute buy-and-hold strategy performance
+    - Aggregate returns from different time periods
+    - Convert period returns to cumulative returns
+    
+    See Also
+    --------
+    annualize_rets : Convert to annualized return format
+    np.cumprod : Alternative method using (1+r).prod() - 1
+    
+    References
+    ----------
+    .. [1] Bodie, Z., Kane, A., & Marcus, A. (2014). "Investments", 10th ed.
+    """
+    return np.expm1(np.log1p(r).sum())
+
+
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score
+import scipy.stats as stats
+
+def regress(dependent_variable, explanatory_variables, alpha=True):
+    """
+    Perform linear regression using sklearn's LinearRegression.
+    
+    Decomposes the dependent variable into explanatory variables using OLS regression.
+    Returns a custom results object with similar interface to statsmodels.
+    
+    Parameters
+    ----------
+    dependent_variable : pd.Series or np.ndarray
+        Target variable (y) to be predicted.
+    explanatory_variables : pd.DataFrame or np.ndarray
+        Predictor variables (X).
+    alpha : bool, optional, default=True
+        If True, includes an intercept term in the regression.
+        If False, forces regression through the origin.
+    
+    Returns
+    -------
+    RegressionResults
+        Custom object with attributes:
+        - .params : Regression coefficients (pd.Series if input is DataFrame)
+        - .rsquared : R² value
+        - .rsquared_adj : Adjusted R²
+        - .tvalues : t-statistics for each coefficient
+        - .pvalues : p-values for each coefficient
+        - .summary() : Print formatted summary
+        - .model : Underlying sklearn LinearRegression object
+    
+    Examples
+    --------
+    >>> # Simple regression
+    >>> y = pd.Series([1, 2, 3, 4, 5])
+    >>> X = pd.DataFrame({'x1': [1, 2, 3, 4, 5], 'x2': [2, 4, 5, 4, 5]})
+    >>> results = regress(y, X)
+    >>> print(results.params)
+    >>> print(f"R²: {results.rsquared:.4f}")
+    >>> results.summary()
+    
+    >>> # Access sklearn model directly
+    >>> predictions = results.model.predict(X)
+    """
+    from sklearn.linear_model import LinearRegression
+    from sklearn.metrics import r2_score
+    import scipy.stats as stats
+    
+    # Convert to numpy arrays for sklearn
+    X = explanatory_variables.values if hasattr(explanatory_variables, 'values') else explanatory_variables
+    y = dependent_variable.values if hasattr(dependent_variable, 'values') else dependent_variable
+    
+    # Fit model
+    lm = LinearRegression(fit_intercept=alpha)
+    lm.fit(X, y)
+    
+    # Get predictions and residuals
+    y_pred = lm.predict(X)
+    residuals = y - y_pred
+    
+    # Calculate metrics
+    n = len(y)
+    k = X.shape[1]
+    
+    # R-squared
+    rsquared = r2_score(y, y_pred)
+    
+    # Adjusted R-squared
+    rsquared_adj = 1 - (1 - rsquared) * (n - 1) / (n - k - 1)
+    
+    # Standard error of residuals
+    mse = np.sum(residuals**2) / (n - k - 1)
+    se = np.sqrt(mse)
+    
+    # Variance-covariance matrix
+    X_with_intercept = np.column_stack([np.ones(n), X]) if alpha else X
+    try:
+        var_covar = mse * np.linalg.inv(X_with_intercept.T @ X_with_intercept)
+        se_coef = np.sqrt(np.diag(var_covar))
+    except np.linalg.LinAlgError:
+        # Singular matrix - set to NaN
+        se_coef = np.full(k + (1 if alpha else 0), np.nan)
+    
+    # Combine intercept and coefficients
+    if alpha:
+        params = np.concatenate([[lm.intercept_], lm.coef_])
+    else:
+        params = lm.coef_
+    
+    # t-values and p-values
+    tvalues = params / se_coef
+    pvalues = 2 * (1 - stats.t.cdf(np.abs(tvalues), n - k - 1))
+    
+    # Create parameter names
+    if hasattr(explanatory_variables, 'columns'):
+        param_names = ['const'] + list(explanatory_variables.columns) if alpha else list(explanatory_variables.columns)
+        params = pd.Series(params, index=param_names)
+        tvalues = pd.Series(tvalues, index=param_names)
+        pvalues = pd.Series(pvalues, index=param_names)
+    
+    # Create results object
+    class RegressionResults:
+        def __init__(self):
+            self.model = lm
+            self.params = params
+            self.rsquared = rsquared
+            self.rsquared_adj = rsquared_adj
+            self.tvalues = tvalues
+            self.pvalues = pvalues
+            self.residuals = residuals
+            self.fitted_values = y_pred
+            self.nobs = n
+            self.df_resid = n - k - 1
+            self.df_model = k
+            
+        def summary(self):
+            print("="*70)
+            print("Linear Regression Results (sklearn)")
+            print("="*70)
+            print(f"R-squared:           {self.rsquared:.4f}")
+            print(f"Adj. R-squared:      {self.rsquared_adj:.4f}")
+            print(f"No. Observations:    {self.nobs}")
+            print(f"Df Residuals:        {self.df_resid}")
+            print(f"Df Model:            {self.df_model}")
+            print("="*70)
+            print(f"{'Variable':<15} {'Coef':>10} {'t-value':>10} {'p-value':>10}")
+            print("-"*70)
+            
+            if isinstance(self.params, pd.Series):
+                for name in self.params.index:
+                    print(f"{name:<15} {self.params[name]:>10.4f} {self.tvalues[name]:>10.3f} {self.pvalues[name]:>10.4f}")
+            else:
+                for i in range(len(self.params)):
+                    var_name = f"x{i}" if i > 0 or not alpha else "const"
+                    print(f"{var_name:<15} {self.params[i]:>10.4f} {self.tvalues[i]:>10.3f} {self.pvalues[i]:>10.4f}")
+            print("="*70)
+    
+    return RegressionResults()
